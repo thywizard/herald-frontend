@@ -1,7 +1,7 @@
 import { Header } from '../../../components/layout';
-import { ArticleActions, SaveButton, ReadingProgress } from '../../../components/interactive';
+import { ArticleActions, SaveButton, ReadingProgress, RecordHistory } from '../../../components/interactive';
 import { ArticleRow, SafeImage } from '../../../components/cards';
-import { getArticle } from '../../../lib/data';
+import { getArticle, parseArticleBody } from '../../../lib/data';
 import { notFound } from 'next/navigation';
 
 export async function generateMetadata({ params }) {
@@ -59,6 +59,7 @@ export default async function ArticlePage({ params }) {
     <main className="min-h-screen bg-paper pb-20">
       <Header />
       <ReadingProgress />
+      <RecordHistory articleId={article._id} />
       <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
 
       <div className="relative w-full aspect-[4/3] bg-rule">
@@ -99,8 +100,18 @@ export default async function ArticlePage({ params }) {
           <SaveButton articleId={article._id} />
         </div>
 
-        <div className="prose prose-lg max-w-none pt-6 font-serif text-ink leading-relaxed whitespace-pre-line">
-          {article.body}
+        <div className="prose prose-lg max-w-none pt-6 font-serif text-ink leading-relaxed">
+          {parseArticleBody(article.body).map((segment, i) =>
+            segment.type === 'image' ? (
+              <div key={i} className="relative w-full aspect-[4/3] bg-rule rounded-lg overflow-hidden my-5 not-prose">
+                <SafeImage src={segment.url} fill sizes="100vw" className="object-cover" />
+              </div>
+            ) : (
+              <p key={i} className="whitespace-pre-line mb-4 last:mb-0">
+                {segment.value}
+              </p>
+            )
+          )}
         </div>
       </article>
 

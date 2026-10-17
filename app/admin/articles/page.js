@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useAdmin } from '../../../components/interactive';
 import { SafeImage } from '../../../components/cards';
-import { listArticles, deleteArticle, unpublishArticle, publishArticle, togglePin } from '../../../lib/data';
+import { listArticles, deleteArticle, unpublishArticle, publishArticle, togglePin, notifyArticle } from '../../../lib/data';
 
 const STATUS_FILTERS = [
   { label: 'All', value: '' },
@@ -18,6 +18,7 @@ export default function ArticlesPage() {
   const [total, setTotal] = useState(0);
   const [status, setStatus] = useState('');
   const [loading, setLoading] = useState(true);
+  const [notifyingId, setNotifyingId] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -39,6 +40,18 @@ export default function ArticlesPage() {
   async function handleUnpublish(id) { await unpublishArticle(key, id); load(); }
   async function handlePublish(id) { await publishArticle(key, id); load(); }
   async function handlePin(id) { await togglePin(key, id); load(); }
+  async function handleNotify(id) {
+    if (!confirm('Send a push notification for this article to everyone subscribed?')) return;
+    setNotifyingId(id);
+    try {
+      const { push } = await notifyArticle(key, id);
+      alert(push ? `Sent to ${push.sent} device(s).` : 'Notification sent.');
+    } catch {
+      alert('Failed to send notification.');
+    } finally {
+      setNotifyingId(null);
+    }
+  }
 
   return (
     <div>
@@ -85,6 +98,15 @@ export default function ArticlesPage() {
                   )
                 ) : (
                   <button onClick={() => handlePublish(a._id)} className="text-teal underline">Publish</button>
+                )}
+                {role === 'admin' && a.status === 'published' && (
+                  <button
+                    onClick={() => handleNotify(a._id)}
+                    disabled={notifyingId === a._id}
+                    className="text-accent-dark underline disabled:opacity-50"
+                  >
+                    {notifyingId === a._id ? 'Sending...' : 'Notify'}
+                  </button>
                 )}
                 {role === 'admin' && (
                   <button onClick={() => handleDelete(a._id)} className="text-red-600 underline">Delete</button>

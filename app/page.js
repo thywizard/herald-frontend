@@ -1,6 +1,6 @@
 import { Header, BreakingBar, CategoryTabs, Footer } from '../components/layout';
 import { LeadStory } from '../components/cards';
-import { InfiniteFeed } from '../components/interactive';
+import { InfiniteFeed, HomeSearchBar } from '../components/interactive';
 import { getFeed } from '../lib/data';
 
 export default async function HomePage() {
@@ -10,6 +10,7 @@ export default async function HomePage() {
   return (
     <main className="min-h-screen bg-paper pb-20">
       <Header />
+      <HomeSearchBar />
       <BreakingBar items={articles.slice(0, 5)} />
       <CategoryTabs />
 

@@ -2,7 +2,7 @@ import { Fraunces, Inter } from 'next/font/google';
 import './globals.css';
 import { ThemeInit, Analytics } from '../components/scripts';
 import { BottomNav } from '../components/layout';
-import { BackToTop, InstallPrompt } from '../components/interactive';
+import { BackToTop, InstallPrompt, ServiceWorkerRegister } from '../components/interactive';
 
 const fraunces = Fraunces({
   subsets: ['latin'],
@@ -56,6 +56,7 @@ export default function RootLayout({ children }) {
         <BottomNav />
         <BackToTop />
         <InstallPrompt />
+        <ServiceWorkerRegister />
         <Analytics />
       </body>
     </html>

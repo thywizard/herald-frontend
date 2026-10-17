@@ -1,8 +1,22 @@
 'use client';
 
 import { useState, useEffect, useRef, createContext, useContext } from 'react';
-import { likeArticle, shareArticle, isSaved, toggleSaved, getFeed, getCategoryFeed, whoAmI } from '../lib/data';
-import { ArticleRow, ArticleRowSkeleton } from './cards';
+import { useRouter } from 'next/navigation';
+import {
+  likeArticle,
+  shareArticle,
+  isSaved,
+  toggleSaved,
+  getFeed,
+  getCategoryFeed,
+  whoAmI,
+  recordHistory,
+  getVapidPublicKey,
+  subscribeToPush,
+  unsubscribeFromPush,
+  searchArticles,
+} from '../lib/data';
+import { ArticleRow, ArticleRowSkeleton, SafeImage } from './cards';
 
 export function ArticleActions({ articleId, initialLikes, initialShares, title, url }) {
   const [likes, setLikes] = useState(initialLikes);
@@ -143,6 +157,225 @@ export function InstallPrompt() {
           Install
         </button>
       </div>
+    </div>
+  );
+}
+
+// Silently records an article visit to local reading history. Dropped
+// into the article page with no visible UI of its own.
+export function RecordHistory({ articleId }) {
+  useEffect(() => {
+    recordHistory(articleId);
+  }, [articleId]);
+  return null;
+}
+
+// Registers the service worker once, on every page (via app/layout.js) —
+// needed for push notifications to work at all, and harmless otherwise.
+export function ServiceWorkerRegister() {
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch((err) => {
+        console.error('Service worker registration failed:', err);
+      });
+    }
+  }, []);
+  return null;
+}
+
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - (base64String.length % 4)) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const rawData = atob(base64);
+  const outputArray = new Uint8Array(rawData.length);
+  for (let i = 0; i < rawData.length; i++) {
+    outputArray[i] = rawData.charCodeAt(i);
+  }
+  return outputArray;
+}
+
+// Push notification opt-in toggle — lives in Settings. Handles the full
+// flow: request permission -> subscribe via the browser's PushManager with
+// our VAPID public key -> send the subscription to the backend. Browsers
+// with no Push API support (notably iOS Safari outside an installed PWA)
+// show an explanatory message instead of a broken toggle.
+export function PushSettingsRow() {
+  const [supported, setSupported] = useState(true);
+  const [permission, setPermission] = useState('default');
+  const [subscribed, setSubscribed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+      setSupported(false);
+      return;
+    }
+    setPermission(Notification.permission);
+    navigator.serviceWorker.ready.then(async (reg) => {
+      const sub = await reg.pushManager.getSubscription();
+      setSubscribed(!!sub);
+    });
+  }, []);
+
+  async function enable() {
+    setBusy(true);
+    setError('');
+    try {
+      const perm = await Notification.requestPermission();
+      setPermission(perm);
+      if (perm !== 'granted') {
+        setError('Notifications were blocked — enable them in your browser settings to turn this on.');
+        return;
+      }
+      const reg = await navigator.serviceWorker.ready;
+      const { publicKey } = await getVapidPublicKey();
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(publicKey),
+      });
+      await subscribeToPush(sub.toJSON());
+      setSubscribed(true);
+    } catch (err) {
+      setError('Could not enable notifications: ' + err.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disable() {
+    setBusy(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) {
+        await unsubscribeFromPush(sub.endpoint);
+        await sub.unsubscribe();
+      }
+      setSubscribed(false);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!supported) {
+    return (
+      <div>
+        <span className="text-ink font-medium block">Push notifications</span>
+        <span className="text-ink-soft text-xs">Not supported in this browser — try Chrome on Android, or install Herald as an app.</span>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <div className="flex items-center justify-between">
+        <div>
+          <span className="text-ink font-medium block">Push notifications</span>
+          <span className="text-ink-soft text-xs">Breaking news straight to your device</span>
+        </div>
+        <button
+          disabled={busy}
+          onClick={subscribed ? disable : enable}
+          className={`w-12 h-7 rounded-full transition-colors relative shrink-0 disabled:opacity-50 ${subscribed ? 'bg-accent' : 'bg-rule'}`}
+          aria-pressed={subscribed}
+        >
+          <span className={`absolute top-1 w-5 h-5 rounded-full bg-paper transition-transform ${subscribed ? 'translate-x-6' : 'translate-x-1'}`} />
+        </button>
+      </div>
+      {permission === 'denied' && (
+        <p className="text-xs text-red-600 mt-2">
+          Notifications are blocked for this site. Enable them from your browser's site settings to turn this on.
+        </p>
+      )}
+      {error && <p className="text-xs text-red-600 mt-2">{error}</p>}
+    </div>
+  );
+}
+
+// Live search bar shown at the top of Home — searches Herald's own
+// articles as you type (debounced) and shows a results dropdown, rather
+// than depending on an external Google CSE being configured.
+export function HomeSearchBar() {
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState([]);
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const router = useRouter();
+  const boxRef = useRef(null);
+
+  useEffect(() => {
+    if (!query.trim()) {
+      setResults([]);
+      setOpen(false);
+      return;
+    }
+    setLoading(true);
+    const timer = setTimeout(() => {
+      searchArticles(query.trim())
+        .then((data) => {
+          setResults(data.slice(0, 6));
+          setOpen(true);
+        })
+        .catch(() => setResults([]))
+        .finally(() => setLoading(false));
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  useEffect(() => {
+    function onClickOutside(e) {
+      if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false);
+    }
+    document.addEventListener('mousedown', onClickOutside);
+    return () => document.removeEventListener('mousedown', onClickOutside);
+  }, []);
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    if (query.trim()) router.push(`/search?q=${encodeURIComponent(query.trim())}`);
+  }
+
+  return (
+    <div ref={boxRef} className="relative px-4 py-3">
+      <form onSubmit={handleSubmit} className="relative">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-soft pointer-events-none">
+          <circle cx="11" cy="11" r="7" />
+          <path d="m21 21-4.3-4.3" />
+        </svg>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => results.length > 0 && setOpen(true)}
+          placeholder="Search Herald..."
+          className="w-full pl-10 pr-4 py-2.5 bg-rule/40 text-ink placeholder:text-ink-soft rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-accent/50"
+        />
+      </form>
+
+      {open && (
+        <div className="absolute inset-x-4 mt-2 bg-paper border border-rule rounded-xl shadow-lg overflow-hidden z-40 max-h-[70vh] overflow-y-auto">
+          {loading && <p className="text-center text-ink-soft text-sm py-4">Searching...</p>}
+          {!loading && results.length === 0 && (
+            <p className="text-center text-ink-soft text-sm py-4">No results for "{query}"</p>
+          )}
+          {!loading &&
+            results.map((r) => (
+              <button
+                key={r._id}
+                onClick={() => {
+                  setOpen(false);
+                  router.push(`/article/${r._id}`);
+                }}
+                className="flex items-center gap-3 w-full text-left px-3 py-2.5 hover:bg-rule/30 border-b border-rule last:border-0"
+              >
+                <div className="relative w-12 h-12 shrink-0 rounded overflow-hidden bg-rule">
+                  <SafeImage src={r.image} fill sizes="48px" className="object-cover" />
+                </div>
+                <span className="text-sm text-ink line-clamp-2">{r.headline}</span>
+              </button>
+            ))}
+        </div>
+      )}
     </div>
   );
 }

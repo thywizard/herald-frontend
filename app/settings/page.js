@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { Header } from '../../components/layout';
+import { PushSettingsRow } from '../../components/interactive';
 import { getSavedIds } from '../../lib/data';
 
 const FONT_SCALES = [
@@ -96,7 +97,12 @@ export default function SettingsPage() {
       </Row>
 
       <Row>
-        <Link href="/saved" className="text-ink font-medium">View saved articles →</Link>
+        <PushSettingsRow />
+      </Row>
+
+      <Row>
+        <Link href="/saved" className="text-ink font-medium block mb-2">View saved articles →</Link>
+        <Link href="/history" className="text-ink font-medium">View reading history →</Link>
       </Row>
 
       <Row>
