@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Header } from '../../components/layout';
 import { HeraldMark } from '../../components/layout';
+import { isInstalledApp } from '../../lib/installed';
 
 const STEPS = [
   'Tap “Download Herald for Android” below.',
@@ -15,8 +16,10 @@ export default function DownloadPage() {
   // The APK is a file we add to the site after building it. Until it's there,
   // show "coming soon" instead of a dead download link.
   const [available, setAvailable] = useState(null);
+  const [inApp, setInApp] = useState(false);
 
   useEffect(() => {
+    setInApp(isInstalledApp());
     fetch('/herald.apk', { method: 'HEAD' })
       .then((r) => setAvailable(r.ok && !(r.headers.get('content-type') || '').includes('text/html')))
       .catch(() => setAvailable(false));
@@ -34,8 +37,11 @@ export default function DownloadPage() {
           The full Herald experience as an app — news, search and Herald AI, without a browser bar.
         </p>
 
-        {available === null && <div className="h-12" />}
-        {available === true && (
+        {inApp && (
+          <p className="inline-block px-5 py-3 rounded-full bg-rule/50 text-ink text-sm">You’re already using the Herald app. 🎉</p>
+        )}
+        {!inApp && available === null && <div className="h-12" />}
+        {!inApp && available === true && (
           <a
             href="/herald.apk"
             download="Herald.apk"
@@ -44,11 +50,12 @@ export default function DownloadPage() {
             Download Herald for Android
           </a>
         )}
-        {available === false && (
+        {!inApp && available === false && (
           <p className="inline-block px-5 py-3 rounded-full bg-rule/50 text-ink-soft text-sm">The Android app is coming soon.</p>
         )}
       </div>
 
+      {!inApp && (
       <div className="mx-4 mt-8 border border-rule rounded-2xl p-5">
         <h2 className="font-serif text-lg font-semibold text-ink mb-3">How to install</h2>
         <ol className="space-y-3">
@@ -63,6 +70,7 @@ export default function DownloadPage() {
           Prefer not to install a file? Open Herald in Chrome, tap the ⋮ menu and choose “Install app” — you get the same thing.
         </p>
       </div>
+      )}
     </main>
   );
 }

@@ -6,6 +6,7 @@ import { Header } from '../../components/layout';
 import { PushSettingsRow, Toggle } from '../../components/interactive';
 import { getSavedIds, getRecentSearches, getChatSessions } from '../../lib/data';
 import { useSettings, setSetting, resetSettings } from '../../lib/settings';
+import { isInstalledApp } from '../../lib/installed';
 
 const FONT_SCALES = [
   { label: 'Small', value: '93.75%' },
@@ -103,6 +104,8 @@ function SectionTitle({ children }) {
 }
 
 export default function SettingsPage() {
+  const [inApp, setInApp] = useState(false);
+  useEffect(() => setInApp(isInstalledApp()), []);
   const [dark, setDark] = useState(false);
   const [fontScale, setFontScale] = useState('100%');
   const [savedCount, setSavedCount] = useState(0);
@@ -247,7 +250,7 @@ export default function SettingsPage() {
 
       <SectionTitle>About</SectionTitle>
       <Card>
-        <NavLinkRow href="/download" icon="download" label="Get the Android app" sub="Install Herald as a real app" />
+        {!inApp && <NavLinkRow href="/download" icon="download" label="Get the Android app" sub="Install Herald as a real app" />}
         <NavLinkRow href="/about" icon="info" label="About Herald" />
         <NavLinkRow href="/privacy" icon="shield" label="Privacy Policy" />
         <NavLinkRow href="/terms" icon="file" label="Terms of Use" last />

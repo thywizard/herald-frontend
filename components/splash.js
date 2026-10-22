@@ -14,7 +14,7 @@ import { useEffect } from 'react';
  * This component just dismisses it: it waits until the app has hydrated, keeps
  * the logo on screen for a short minimum so it doesn't flicker, then fades out.
  */
-const MIN_VISIBLE_MS = 900;
+const MIN_VISIBLE_MS = 1000;
 const FADE_MS = 380;
 
 export function AppSplash() {
@@ -22,7 +22,10 @@ export function AppSplash() {
     const root = document.documentElement;
     if (!root.classList.contains('show-splash')) return;
 
-    const wait = Math.max(0, MIN_VISIBLE_MS - Math.round(performance.now()));
+    // Counted from now (the app has just hydrated), not from page load: the
+    // Android system splash is still on screen while the page loads, so a
+    // timer started at navigation would already be spent before anyone saw it.
+    const wait = MIN_VISIBLE_MS;
     let t2;
     const t1 = setTimeout(() => {
       root.classList.add('splash-out');
