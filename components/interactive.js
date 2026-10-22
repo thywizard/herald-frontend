@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef, createContext, useContext } from 'react';
-import { useRouter } from 'next/navigation';
+import { useState, useEffect, useRef } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
 import {
   likeArticle,
   shareArticle,
@@ -9,19 +9,76 @@ import {
   toggleSaved,
   getFeed,
   getCategoryFeed,
-  whoAmI,
   recordHistory,
   getVapidPublicKey,
   subscribeToPush,
   unsubscribeFromPush,
   searchArticles,
+  cacheArticleOffline,
+  uncacheArticleOffline,
+  getComments,
+  postComment,
+  getSavedCommentName,
+  saveCommentName,
+  warmSearch,
 } from '../lib/data';
 import { ArticleRow, ArticleRowSkeleton, SafeImage } from './cards';
+import { useSettings, applyDocumentSettings } from '../lib/settings';
 
-export function ArticleActions({ articleId, initialLikes, initialShares, title, url }) {
+// Share targets for browsers without the native share sheet (desktop).
+const SHARE_TARGETS = [
+  { id: 'whatsapp', label: 'WhatsApp', href: ({ text, url }) => `https://wa.me/?text=${encodeURIComponent(`${text} ${url}`)}` },
+  { id: 'x', label: 'X (Twitter)', href: ({ title, url }) => `https://twitter.com/intent/tweet?text=${encodeURIComponent(title)}&url=${encodeURIComponent(url)}` },
+  { id: 'facebook', label: 'Facebook', href: ({ url }) => `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(url)}` },
+  { id: 'telegram', label: 'Telegram', href: ({ text, url }) => `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(text)}` },
+];
+
+function ShareSheet({ open, onClose, payload, onShared, onCopy }) {
+  if (!open) return null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center">
+      <div className="absolute inset-0 bg-ink/50" onClick={onClose} />
+      <div className="relative w-full max-w-sm bg-paper rounded-t-3xl sm:rounded-3xl border border-rule p-4 pb-6">
+        <div className="w-10 h-1 rounded-full bg-rule mx-auto mb-4" />
+        <p className="font-serif text-lg font-semibold text-ink mb-1">Share this story</p>
+        <p className="text-xs text-ink-soft line-clamp-2 mb-4">{payload.title}</p>
+        <div className="grid grid-cols-2 gap-2">
+          {SHARE_TARGETS.map((t) => (
+            <a
+              key={t.id}
+              href={t.href(payload)}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => {
+                onShared();
+                onClose();
+              }}
+              className="px-3 py-3 rounded-xl border border-rule text-sm font-medium text-ink text-center hover:bg-rule/30"
+            >
+              {t.label}
+            </a>
+          ))}
+        </div>
+        <button
+          onClick={() => {
+            onCopy();
+            onClose();
+          }}
+          className="w-full mt-2 px-3 py-3 rounded-xl bg-ink text-paper text-sm font-semibold"
+        >
+          Copy link &amp; summary
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function ArticleActions({ articleId, initialLikes, initialShares, title, lead }) {
   const [likes, setLikes] = useState(initialLikes);
   const [shares, setShares] = useState(initialShares);
   const [liked, setLiked] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [toast, setToast] = useState('');
 
   async function handleLike() {
     if (liked) return;
@@ -35,19 +92,48 @@ export function ArticleActions({ articleId, initialLikes, initialShares, title, 
     }
   }
 
-  async function handleShare() {
-    const shareData = { title, url };
+  function showToast(msg) {
+    setToast(msg);
+    setTimeout(() => setToast(''), 2200);
+  }
+
+  // The link is built from wherever the app is actually running (so it is
+  // always the real address, never a placeholder domain), and the share text
+  // carries the story's "sweet part" so a pasted link comes with a reason to
+  // tap it: headline, a short lead, then "Read more on Herald".
+  function buildPayload() {
+    const url = `${window.location.origin}/article/${articleId}`;
+    const text = `${title}\n\n${lead ? `${lead}\n\n` : ''}Read more on Herald:`;
+    return { title, text, url };
+  }
+
+  function countShare() {
+    setShares((n) => n + 1);
+    shareArticle(articleId).catch(() => {});
+  }
+
+  async function copyShare() {
+    const { text, url } = buildPayload();
     try {
-      if (navigator.share) {
-        await navigator.share(shareData);
-      } else {
-        await navigator.clipboard.writeText(url);
-        alert('Link copied');
-      }
-      setShares((n) => n + 1);
-      shareArticle(articleId).catch(() => {});
+      await navigator.clipboard.writeText(`${text} ${url}`);
+      showToast('Link & summary copied');
+      countShare();
     } catch {
-      // user cancelled share sheet
+      showToast('Could not copy — long-press the address bar instead');
+    }
+  }
+
+  async function handleShare() {
+    const payload = buildPayload();
+    if (navigator.share) {
+      try {
+        await navigator.share(payload);
+        countShare();
+      } catch {
+        // user cancelled the share sheet
+      }
+    } else {
+      setSheetOpen(true);
     }
   }
 
@@ -70,20 +156,42 @@ export function ArticleActions({ articleId, initialLikes, initialShares, title, 
         </svg>
         {shares}
       </button>
+
+      <ShareSheet
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        payload={sheetOpen ? buildPayload() : { title }}
+        onShared={countShare}
+        onCopy={copyShare}
+      />
+      {toast && (
+        <div className="fixed bottom-24 inset-x-0 z-50 flex justify-center pointer-events-none">
+          <span className="px-4 py-2 rounded-full bg-ink text-paper text-xs font-medium shadow-lg">{toast}</span>
+        </div>
+      )}
     </div>
   );
 }
 
-export function SaveButton({ articleId }) {
+export function SaveButton({ articleId, image }) {
   const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     setSaved(isSaved(articleId));
   }, [articleId]);
 
+  function handleToggle() {
+    const next = toggleSaved(articleId);
+    setSaved(next);
+    // Fire-and-forget: cache (or drop) the offline copy. Saving still
+    // works instantly off localStorage even if this fails or is slow.
+    if (next) cacheArticleOffline(articleId, image);
+    else uncacheArticleOffline(articleId);
+  }
+
   return (
     <button
-      onClick={() => setSaved(toggleSaved(articleId))}
+      onClick={handleToggle}
       className={`flex items-center gap-2 text-sm font-medium transition-colors ${
         saved ? 'text-accent-dark' : 'text-ink-soft hover:text-ink'
       }`}
@@ -97,27 +205,160 @@ export function SaveButton({ articleId }) {
   );
 }
 
-// Floating back-to-top button — appears after scrolling past one screen
-export function BackToTop() {
-  const [visible, setVisible] = useState(false);
+function timeAgo(dateStr) {
+  const secs = Math.max(1, Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000));
+  if (secs < 60) return 'just now';
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  const days = Math.floor(hrs / 24);
+  if (days < 30) return `${days}d ago`;
+  return new Date(dateStr).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// Comments under an article. No login in Herald, so each commenter just
+// types whatever display name they want shown on their comment (we
+// remember the last one used on this device so it isn't retyped).
+export function CommentsSection({ articleId }) {
+  const { settings } = useSettings();
+  const [comments, setComments] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [name, setName] = useState('');
+  const [text, setText] = useState('');
+  const [posting, setPosting] = useState(false);
+  const [error, setError] = useState('');
 
   useEffect(() => {
+    setName(getSavedCommentName());
+    getComments(articleId)
+      .then((data) => setComments(data.comments || []))
+      .catch(() => setComments([]))
+      .finally(() => setLoading(false));
+  }, [articleId]);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    const n = name.trim();
+    const t = text.trim();
+    if (!n || !t || posting) return;
+    setPosting(true);
+    setError('');
+    try {
+      const created = await postComment(articleId, { name: n, text: t });
+      saveCommentName(n);
+      setComments((c) => [created, ...c]);
+      setText('');
+    } catch (err) {
+      setError(err.message || 'Could not post your comment. Try again.');
+    } finally {
+      setPosting(false);
+    }
+  }
+
+  if (!settings.showComments) return null;
+
+  return (
+    <section className="px-4 mt-8">
+      <h2 className="font-serif text-xl font-semibold text-ink mb-3">
+        Comments{comments.length > 0 ? ` (${comments.length})` : ''}
+      </h2>
+
+      <form onSubmit={handleSubmit} className="bg-rule/25 border border-rule rounded-2xl p-3 mb-5">
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          maxLength={40}
+          placeholder="Your name (shown on your comment)"
+          className="w-full px-3 py-2 mb-2 bg-paper border border-rule text-ink placeholder:text-ink-soft rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-accent/50"
+        />
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          maxLength={1000}
+          rows={3}
+          placeholder="Add a comment..."
+          className="w-full px-3 py-2 bg-paper border border-rule text-ink placeholder:text-ink-soft rounded-lg text-sm resize-none focus:outline-none focus:ring-2 focus:ring-accent/50"
+        />
+        {error && <p className="text-xs text-red-600 mt-2">{error}</p>}
+        <div className="flex justify-end mt-2">
+          <button
+            type="submit"
+            disabled={posting || !name.trim() || !text.trim()}
+            className="px-4 py-2 bg-ink text-paper rounded-full text-xs font-semibold disabled:opacity-40"
+          >
+            {posting ? 'Posting...' : 'Post comment'}
+          </button>
+        </div>
+      </form>
+
+      {loading && <p className="text-ink-soft text-sm">Loading comments...</p>}
+      {!loading && comments.length === 0 && (
+        <p className="text-ink-soft text-sm">No comments yet — be the first to share your thoughts.</p>
+      )}
+      <div className="space-y-4">
+        {comments.map((c) => (
+          <div key={c._id} className="flex gap-3">
+            <span className="w-8 h-8 shrink-0 rounded-full bg-teal/10 text-teal text-xs font-bold flex items-center justify-center">
+              {c.name.charAt(0).toUpperCase()}
+            </span>
+            <div className="min-w-0">
+              <p className="text-sm">
+                <span className="font-medium text-ink">{c.name}</span>
+                <span className="text-ink-soft text-xs"> · {timeAgo(c.createdAt)}</span>
+              </p>
+              <p className="text-sm text-ink whitespace-pre-line break-words">{c.text}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+// Floating back-to-top button. It used to sit on screen permanently once you
+// had scrolled a screen down, covering buttons like "Post comment". Now it
+// behaves like the browser's own: it appears only while you scroll UP, and
+// tucks itself away after a couple of seconds (or as soon as you scroll
+// down), so it never parks on top of the content you're trying to tap.
+export function BackToTop() {
+  const [visible, setVisible] = useState(false);
+  const pathname = usePathname();
+
+  useEffect(() => {
+    let lastY = window.scrollY;
+    let timer;
     function onScroll() {
-      setVisible(window.scrollY > 600);
+      const y = window.scrollY;
+      if (y < 500) {
+        setVisible(false);
+      } else if (y < lastY - 6) {
+        setVisible(true);
+        clearTimeout(timer);
+        timer = setTimeout(() => setVisible(false), 2500);
+      } else if (y > lastY + 6) {
+        setVisible(false);
+      }
+      lastY = y;
     }
     window.addEventListener('scroll', onScroll, { passive: true });
-    return () => window.removeEventListener('scroll', onScroll);
+    return () => {
+      window.removeEventListener('scroll', onScroll);
+      clearTimeout(timer);
+    };
   }, []);
 
-  if (!visible) return null;
+  // The AI chat is a fixed-height app screen with its own inner scroll, and
+  // Studio (/admin) is a separate app — neither wants this button.
+  if (!visible || pathname === '/ai' || pathname?.startsWith('/admin')) return null;
 
   return (
     <button
       onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
-      className="fixed bottom-20 right-4 z-30 w-11 h-11 rounded-full bg-ink text-paper shadow-lg flex items-center justify-center"
+      className="fixed bottom-20 right-4 z-30 w-10 h-10 rounded-full bg-ink/85 text-paper shadow-lg flex items-center justify-center backdrop-blur"
       aria-label="Back to top"
     >
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
         <path d="M12 19V5M5 12l7-7 7 7" />
       </svg>
     </button>
@@ -130,6 +371,7 @@ export function BackToTop() {
 export function InstallPrompt() {
   const [promptEvent, setPromptEvent] = useState(null);
   const [dismissed, setDismissed] = useState(false);
+  const pathname = usePathname();
 
   useEffect(() => {
     function handler(e) {
@@ -140,7 +382,8 @@ export function InstallPrompt() {
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
 
-  if (!promptEvent || dismissed) return null;
+  // Studio (/admin) is its own installable app with its own prompt.
+  if (!promptEvent || dismissed || pathname?.startsWith('/admin')) return null;
 
   async function install() {
     promptEvent.prompt();
@@ -172,15 +415,69 @@ export function RecordHistory({ articleId }) {
 
 // Registers the service worker once, on every page (via app/layout.js) —
 // needed for push notifications to work at all, and harmless otherwise.
+// Shared on/off switch. The knob is pinned with `left-0` and moved by an
+// explicit translate — without `left-0` an absolutely positioned knob starts
+// from its static (centered) position, which is why the old switches showed
+// the knob on the wrong side and pushed it right off the track when on.
+export function Toggle({ checked, onChange, disabled, activeClass = 'bg-accent', label }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={onChange}
+      className={`relative w-12 h-7 shrink-0 rounded-full transition-colors duration-200 disabled:opacity-50 ${
+        checked ? activeClass : 'bg-ink-soft/30'
+      }`}
+    >
+      <span
+        className={`absolute left-0 top-1 w-5 h-5 rounded-full bg-white shadow transition-transform duration-200 ${
+          checked ? 'translate-x-6' : 'translate-x-1'
+        }`}
+      />
+    </button>
+  );
+}
+
 export function ServiceWorkerRegister() {
   useEffect(() => {
-    if ('serviceWorker' in navigator) {
-      navigator.serviceWorker.register('/sw.js').catch((err) => {
+    // Wake the backend + search engine now, while the person is still looking
+    // at the feed, so their first search isn't hitting a cold server.
+    warmSearch();
+    applyDocumentSettings();
+    if (!('serviceWorker' in navigator)) return;
+    navigator.serviceWorker
+      .register('/sw.js')
+      .then(() => syncPushSubscription())
+      .catch((err) => {
         console.error('Service worker registration failed:', err);
       });
-    }
   }, []);
   return null;
+}
+
+const PUSH_OFF_KEY = 'herald_push_off';
+
+// The toggle in Settings reads the BROWSER's subscription, so it can show
+// "on" even when the backend never received it (e.g. the first subscribe
+// call failed while the server was asleep). Nothing is ever sent to a device
+// the backend doesn't know about — so on every app load, quietly re-register
+// whatever subscription the browser holds. It's an upsert, so repeating it
+// is harmless. Skipped if the person turned notifications off themselves.
+async function syncPushSubscription() {
+  try {
+    if (typeof Notification === 'undefined' || !('PushManager' in window)) return;
+    if (Notification.permission !== 'granted') return;
+    if (localStorage.getItem(PUSH_OFF_KEY)) return;
+    const reg = await navigator.serviceWorker.ready;
+    const existing = await reg.pushManager.getSubscription();
+    if (existing) await subscribeToPush(existing.toJSON());
+    else await doPushSubscribe();
+  } catch {
+    // best-effort; the Settings toggle can still be used manually
+  }
 }
 
 function urlBase64ToUint8Array(base64String) {
@@ -194,11 +491,73 @@ function urlBase64ToUint8Array(base64String) {
   return outputArray;
 }
 
-// Push notification opt-in toggle — lives in Settings. Handles the full
-// flow: request permission -> subscribe via the browser's PushManager with
-// our VAPID public key -> send the subscription to the backend. Browsers
-// with no Push API support (notably iOS Safari outside an installed PWA)
-// show an explanatory message instead of a broken toggle.
+// Shared by the auto-prompt and the Settings toggle: subscribes this
+// browser via PushManager with our VAPID key and registers it with the
+// backend. Assumes Notification permission has already been granted.
+async function doPushSubscribe() {
+  const reg = await navigator.serviceWorker.ready;
+  const { publicKey } = await getVapidPublicKey();
+  const sub = await reg.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: urlBase64ToUint8Array(publicKey),
+  });
+  await subscribeToPush(sub.toJSON());
+  return sub;
+}
+
+const AUTO_PUSH_KEY = 'herald_push_auto_prompted';
+
+// Push is meant to be on by default, not a toggle someone has to find —
+// but browsers only ever show the native permission prompt in response to
+// a real user gesture (a silent/automatic grant isn't possible). So this
+// quietly waits for the very first tap anywhere in the app and fires the
+// prompt right then, once, so most people never see an "enable" step at
+// all. If they deny it, nothing happens again — they can still turn it on
+// later from Settings. Rendered once near the root of the app.
+export function AutoPushPrompt() {
+  useEffect(() => {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+    if (typeof Notification === 'undefined') return;
+    if (window.location.pathname.startsWith('/admin')) return; // Studio isn't the reader app
+    let active = true;
+
+    try {
+      if (localStorage.getItem(AUTO_PUSH_KEY)) return;
+    } catch {
+      return;
+    }
+    if (Notification.permission !== 'default') return;
+
+    async function handler() {
+      try {
+        localStorage.setItem(AUTO_PUSH_KEY, '1');
+      } catch {
+        // ignore
+      }
+      document.removeEventListener('click', handler);
+      if (!active) return;
+      try {
+        const perm = await Notification.requestPermission();
+        if (perm === 'granted') await doPushSubscribe();
+      } catch {
+        // silent — the user can still enable it later from Settings
+      }
+    }
+
+    document.addEventListener('click', handler, { once: true });
+    return () => {
+      active = false;
+      document.removeEventListener('click', handler);
+    };
+  }, []);
+  return null;
+}
+
+// Push notification toggle — lives in Settings. On by default via
+// AutoPushPrompt above; this row is for checking status and turning it
+// off/back on by hand. Browsers with no Push API support (notably iOS
+// Safari outside an installed PWA) show an explanatory message instead of
+// a broken toggle.
 export function PushSettingsRow() {
   const [supported, setSupported] = useState(true);
   const [permission, setPermission] = useState('default');
@@ -228,16 +587,14 @@ export function PushSettingsRow() {
         setError('Notifications were blocked — enable them in your browser settings to turn this on.');
         return;
       }
-      const reg = await navigator.serviceWorker.ready;
-      const { publicKey } = await getVapidPublicKey();
-      const sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(publicKey),
-      });
-      await subscribeToPush(sub.toJSON());
+      await doPushSubscribe();
+      try { localStorage.removeItem(PUSH_OFF_KEY); } catch {}
       setSubscribed(true);
     } catch (err) {
-      setError('Could not enable notifications: ' + err.message);
+      const msg = /fetch/i.test(err.message)
+        ? "Couldn't reach the server — it may just be waking up. Try the switch again in a few seconds."
+        : 'Could not enable notifications: ' + err.message;
+      setError(msg);
     } finally {
       setBusy(false);
     }
@@ -252,6 +609,7 @@ export function PushSettingsRow() {
         await unsubscribeFromPush(sub.endpoint);
         await sub.unsubscribe();
       }
+      try { localStorage.setItem(PUSH_OFF_KEY, '1'); } catch {}
       setSubscribed(false);
     } finally {
       setBusy(false);
@@ -274,14 +632,7 @@ export function PushSettingsRow() {
           <span className="text-ink font-medium block">Push notifications</span>
           <span className="text-ink-soft text-xs">Breaking news straight to your device</span>
         </div>
-        <button
-          disabled={busy}
-          onClick={subscribed ? disable : enable}
-          className={`w-12 h-7 rounded-full transition-colors relative shrink-0 disabled:opacity-50 ${subscribed ? 'bg-accent' : 'bg-rule'}`}
-          aria-pressed={subscribed}
-        >
-          <span className={`absolute top-1 w-5 h-5 rounded-full bg-paper transition-transform ${subscribed ? 'translate-x-6' : 'translate-x-1'}`} />
-        </button>
+        <Toggle checked={subscribed} disabled={busy} onChange={subscribed ? disable : enable} label="Push notifications" />
       </div>
       {permission === 'denied' && (
         <p className="text-xs text-red-600 mt-2">
@@ -380,20 +731,11 @@ export function HomeSearchBar() {
   );
 }
 
-// --- Admin auth context ---
-// AdminGate wraps the whole /admin section (via app/admin/layout.js) and
-// provides { key, role } to every nested page through useAdmin(), so the
-// password prompt only ever happens once per session instead of per-page.
-const AdminContext = createContext(null);
-
-export function useAdmin() {
-  return useContext(AdminContext);
-}
-
 // Reading progress bar — fixed thin bar under the header, fills as the
 // reader scrolls through the article body.
 export function ReadingProgress() {
   const [progress, setProgress] = useState(0);
+  const { settings } = useSettings();
 
   useEffect(() => {
     function onScroll() {
@@ -406,102 +748,13 @@ export function ReadingProgress() {
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
+  if (!settings.readingBar) return null;
+
   return (
     <div className="fixed top-14 inset-x-0 z-30 h-0.5 bg-rule">
       <div className="h-full bg-accent transition-[width] duration-150" style={{ width: `${progress}%` }} />
     </div>
   );
-}
-
-export function AdminGate({ children }) {
-  const [key, setKey] = useState(null);
-  const [role, setRole] = useState(null);
-  const [input, setInput] = useState('');
-  const [error, setError] = useState('');
-  const [checking, setChecking] = useState(true);
-
-  useEffect(() => {
-    const stored = sessionStorage.getItem('herald_admin_key');
-    if (stored) {
-      whoAmI(stored)
-        .then((data) => {
-          setKey(stored);
-          setRole(data.role);
-        })
-        .catch(() => sessionStorage.removeItem('herald_admin_key'))
-        .finally(() => setChecking(false));
-    } else {
-      setChecking(false);
-    }
-  }, []);
-
-  async function handleSubmit(e) {
-    e.preventDefault();
-    setError('');
-    try {
-      const data = await whoAmI(input);
-      sessionStorage.setItem('herald_admin_key', input);
-      setKey(input);
-      setRole(data.role);
-    } catch {
-      setError('Incorrect password');
-    }
-  }
-
-  function logout() {
-    sessionStorage.removeItem('herald_admin_key');
-    setKey(null);
-    setRole(null);
-  }
-
-  if (checking) return null;
-
-  if (!key) {
-    return (
-      <div className="min-h-screen bg-ink flex items-center justify-center px-4">
-        <div className="w-full max-w-sm">
-          <div className="flex flex-col items-center mb-8">
-            <div className="w-14 h-14 rounded-2xl bg-accent flex items-center justify-center mb-4">
-              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#15181F" strokeWidth="2">
-                <rect x="3" y="11" width="18" height="10" rx="2" />
-                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
-              </svg>
-            </div>
-            <h1 className="font-serif text-3xl font-semibold text-paper">Herald</h1>
-            <p className="text-paper/50 text-sm mt-1">Admin & Editor Access</p>
-          </div>
-
-          <form onSubmit={handleSubmit} className="bg-paper rounded-2xl p-6 shadow-xl">
-            <label className="block text-xs font-medium text-ink-soft mb-1.5">Password</label>
-            <input
-              type="password"
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              placeholder="Enter your password"
-              autoFocus
-              className="w-full px-4 py-3 border border-rule rounded-lg text-ink mb-3 focus:outline-none focus:border-ink"
-            />
-            {error && (
-              <p className="text-sm text-red-600 mb-3 flex items-center gap-1.5">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <circle cx="12" cy="12" r="10" />
-                  <path d="M12 8v4M12 16h.01" />
-                </svg>
-                {error}
-              </p>
-            )}
-            <button type="submit" className="w-full py-3 bg-ink text-paper rounded-lg text-sm font-semibold">
-              Sign In
-            </button>
-          </form>
-
-          <p className="text-center text-paper/30 text-xs mt-6">Not publicly accessible — authorized staff only</p>
-        </div>
-      </div>
-    );
-  }
-
-  return <AdminContext.Provider value={{ key, role, logout }}>{children}</AdminContext.Provider>;
 }
 
 // Infinite scroll feed — takes the first page (fetched server-side for fast

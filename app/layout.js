@@ -1,8 +1,10 @@
 import { Fraunces, Inter } from 'next/font/google';
 import './globals.css';
 import { ThemeInit, Analytics } from '../components/scripts';
+import { SITE_URL } from '../lib/site';
 import { BottomNav } from '../components/layout';
-import { BackToTop, InstallPrompt, ServiceWorkerRegister } from '../components/interactive';
+import { AppSplash } from '../components/splash';
+import { BackToTop, InstallPrompt, ServiceWorkerRegister, AutoPushPrompt } from '../components/interactive';
 
 const fraunces = Fraunces({
   subsets: ['latin'],
@@ -18,13 +20,21 @@ const inter = Inter({
 });
 
 export const metadata = {
-  metadataBase: new URL('https://herald.ng'),
+  metadataBase: new URL(SITE_URL),
   title: {
     default: 'Herald — News, as it happens',
     template: '%s | Herald',
   },
   description: 'Every story, every angle. Politics, sports, business, world news and more.',
   manifest: '/manifest.json',
+  icons: {
+    icon: [
+      { url: '/favicon-32.png', sizes: '32x32', type: 'image/png' },
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+    ],
+    shortcut: '/favicon.ico',
+    apple: '/apple-touch-icon.png',
+  },
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
@@ -47,16 +57,18 @@ export const viewport = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" className={`${fraunces.variable} ${inter.variable}`}>
+    <html lang="en" className={`${fraunces.variable} ${inter.variable}`} suppressHydrationWarning>
       <head>
         <ThemeInit />
       </head>
       <body>
+        <AppSplash />
         {children}
         <BottomNav />
         <BackToTop />
         <InstallPrompt />
         <ServiceWorkerRegister />
+        <AutoPushPrompt />
         <Analytics />
       </body>
     </html>

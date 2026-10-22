@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useAdmin } from '../../../components/interactive';
+import { useAdmin } from '../../../components/studio';
 import { getIngestLogs, runIngestNow } from '../../../lib/data';
 
 function formatDuration(ms) {
@@ -34,6 +34,16 @@ export default function LogsPage() {
   }, [key]);
 
   useEffect(() => { load(); }, [load]);
+
+  // /admin/logs?run=1 (from AI Desk's "Run ingest now") starts a run straight away.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (new URLSearchParams(window.location.search).get('run') === '1') {
+      window.history.replaceState(null, '', '/admin/logs');
+      handleTrigger();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     return () => {

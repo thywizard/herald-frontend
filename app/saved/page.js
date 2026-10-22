@@ -23,10 +23,23 @@ export default function SavedPage() {
     });
   }, []);
 
+  function clearAll() {
+    if (!confirm(`Remove all ${articles.length} saved articles?`)) return;
+    localStorage.removeItem('herald_saved_articles');
+    setArticles([]);
+  }
+
   return (
     <main className="min-h-screen bg-paper pb-20">
       <Header />
-      <h1 className="px-4 pt-5 pb-2 font-serif text-2xl font-semibold text-ink">Saved</h1>
+      <div className="flex items-center justify-between px-4 pt-5 pb-2">
+        <h1 className="font-serif text-2xl font-semibold text-ink">Saved</h1>
+        {articles.length > 0 && (
+          <button onClick={clearAll} className="text-red-600 text-sm font-medium">
+            Clear all
+          </button>
+        )}
+      </div>
       {loading && <p className="text-center text-ink-soft py-16">Loading...</p>}
       {!loading && articles.length === 0 && (
         <p className="text-center text-ink-soft py-16">Articles you save will show up here.</p>

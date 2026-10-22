@@ -51,6 +51,20 @@ self.addEventListener('push', (event) => {
   event.waitUntil(self.registration.showNotification(headline, options));
 });
 
+// Offline reading fallback. We deliberately do NOT cache-first everything
+// — the news feed should always show the live site when there's a
+// connection. This only kicks in when the network request itself fails
+// (no connection, or truly offline), and only has something to serve for
+// pages/images the user explicitly saved via cacheArticleOffline() in
+// lib/data.js. Anything else just falls through to the browser's normal
+// offline error, same as before.
+self.addEventListener('fetch', (event) => {
+  if (event.request.method !== 'GET') return;
+  event.respondWith(
+    fetch(event.request).catch(() => caches.match(event.request))
+  );
+});
+
 // Deep-link: tapping the notification focuses an already-open Herald tab
 // and navigates it, or opens a new one if none exists.
 self.addEventListener('notificationclick', (event) => {

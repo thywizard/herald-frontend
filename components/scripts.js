@@ -7,6 +7,17 @@ export function ThemeInit() {
       if (theme === 'dark') document.documentElement.classList.add('dark');
       var scale = localStorage.getItem('herald_font_scale');
       if (scale) document.documentElement.style.fontSize = scale;
+      var st = JSON.parse(localStorage.getItem('herald_settings') || '{}');
+      document.documentElement.dataset.saver = st.dataSaver ? 'on' : 'off';
+    } catch (e) {}
+    try {
+      var isApp = (window.matchMedia && (matchMedia('(display-mode: standalone)').matches || matchMedia('(display-mode: fullscreen)').matches))
+        || navigator.standalone === true
+        || (document.referrer || '').indexOf('android-app://') === 0;
+      var seen = sessionStorage.getItem('herald_splash') === '1';
+      if (isApp && !seen && location.pathname.indexOf('/admin') !== 0) {
+        document.documentElement.classList.add('show-splash');
+      }
     } catch (e) {}
   `;
   return <script dangerouslySetInnerHTML={{ __html: code }} />;

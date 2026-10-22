@@ -1,24 +1,31 @@
 import { Header } from '../../../components/layout';
-import { ArticleActions, SaveButton, ReadingProgress, RecordHistory } from '../../../components/interactive';
+import { ArticleActions, SaveButton, ReadingProgress, RecordHistory, CommentsSection } from '../../../components/interactive';
 import { ArticleRow, SafeImage } from '../../../components/cards';
-import { getArticle, parseArticleBody } from '../../../lib/data';
+import { getArticle, parseArticleBody, articleLead } from '../../../lib/data';
+import { SITE_URL } from '../../../lib/site';
 import { notFound } from 'next/navigation';
 
 export async function generateMetadata({ params }) {
   try {
     const { article } = await getArticle(params.id);
+    // The lead (not the raw body, which can contain [[img:…]] tokens) is what
+    // shows under the headline when a link is pasted into WhatsApp, X, etc.
+    const description = articleLead(article.body, 180);
     return {
       title: article.headline,
-      description: article.body.slice(0, 155),
+      description,
       openGraph: {
         title: article.headline,
-        description: article.body.slice(0, 155),
+        description,
+        url: `${SITE_URL}/article/${params.id}`,
+        siteName: 'Herald',
         images: [{ url: article.image }],
         type: 'article',
       },
       twitter: {
         card: 'summary_large_image',
         title: article.headline,
+        description,
         images: [article.image],
       },
       alternates: { canonical: `/article/${params.id}` },
@@ -42,13 +49,15 @@ export default async function ArticlePage({ params }) {
   }
 
   const { article, related } = data;
-  const url = `https://herald.ng/article/${article._id}`;
+  const lead = articleLead(article.body, 200);
   const readMins = estimateReadTime(article.body);
 
   const jsonLd = {
     '@context': 'https://schema.org',
     '@type': 'NewsArticle',
     headline: article.headline,
+    description: lead,
+    mainEntityOfPage: `${SITE_URL}/article/${article._id}`,
     image: [article.image],
     datePublished: article.createdAt,
     dateModified: article.updatedAt,
@@ -95,25 +104,27 @@ export default async function ArticlePage({ params }) {
             initialLikes={article.likes}
             initialShares={article.shares}
             title={article.headline}
-            url={url}
+            lead={lead}
           />
-          <SaveButton articleId={article._id} />
+          <SaveButton articleId={article._id} image={article.image} />
         </div>
 
-        <div className="prose prose-lg max-w-none pt-6 font-serif text-ink leading-relaxed">
+        <div className="article-body max-w-none pt-6 font-serif text-ink leading-relaxed">
           {parseArticleBody(article.body).map((segment, i) =>
             segment.type === 'image' ? (
-              <div key={i} className="relative w-full aspect-[4/3] bg-rule rounded-lg overflow-hidden my-5 not-prose">
+              <div key={i} className="relative w-full aspect-[4/3] bg-rule rounded-lg overflow-hidden my-5">
                 <SafeImage src={segment.url} fill sizes="100vw" className="object-cover" />
               </div>
             ) : (
-              <p key={i} className="whitespace-pre-line mb-4 last:mb-0">
+              <p key={i} className="whitespace-pre-line break-words mb-4 last:mb-0">
                 {segment.value}
               </p>
             )
           )}
         </div>
       </article>
+
+      <CommentsSection articleId={article._id} />
 
       {related?.length > 0 && (
         <section className="mt-10">

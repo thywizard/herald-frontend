@@ -14,12 +14,28 @@ function isValidImageUrl(url) {
   }
 }
 
-// Wraps next/image with a graceful fallback — never crashes the page and
+// Cloudinary (where admin uploads live) can resize + compress on its own CDN,
+// so those images skip Vercel's image optimizer entirely — one less hop that
+// can fail (the optimizer has monthly limits on the free plan) and usually
+// faster. Anything else goes through next/image first.
+function cloudinaryUrl(url, width = 1200) {
+  if (!/^https:\/\/res\.cloudinary\.com\/[^/]+\/image\/upload\//.test(url)) return null;
+  if (/\/upload\/[a-z]_[^/]*\//.test(url)) return url; // already has a transformation
+  return url.replace('/upload/', `/upload/f_auto,q_auto,w_${width}/`);
+}
+
+// Wraps next/image with a graceful fallback chain — never crashes the page and
 // never shows a broken-image icon, regardless of what a source or an
-// admin-entered URL gives us.
+// admin-entered URL gives us:
+//   1. next/image (optimised)        – default for outside news sources
+//   2. a plain <img> of the raw URL  – if the optimizer refuses/fails
+//   3. the neutral placeholder       – only if the image really can't load
+// Non-priority images get a `saver-hide` class so Data saver mode (Settings)
+// can skip loading them.
 export function SafeImage({ src, alt = '', fill, sizes, className, priority }) {
-  const [failed, setFailed] = useState(false);
-  const valid = isValidImageUrl(src) && !failed;
+  const cdn = isValidImageUrl(src) ? cloudinaryUrl(src) : null;
+  const [stage, setStage] = useState(cdn ? 1 : 0);
+  const valid = isValidImageUrl(src) && stage < 2;
 
   if (!valid) {
     return (
@@ -33,6 +49,22 @@ export function SafeImage({ src, alt = '', fill, sizes, className, priority }) {
     );
   }
 
+  const saver = priority ? '' : ' saver-hide';
+
+  if (stage === 1) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={cdn || src}
+        alt={alt}
+        loading={priority ? 'eager' : 'lazy'}
+        referrerPolicy="no-referrer"
+        className={`${className || ''}${saver} ${fill ? 'absolute inset-0 w-full h-full' : ''}`}
+        onError={() => setStage(2)}
+      />
+    );
+  }
+
   return (
     <Image
       src={src}
@@ -40,8 +72,8 @@ export function SafeImage({ src, alt = '', fill, sizes, className, priority }) {
       fill={fill}
       sizes={sizes}
       priority={priority}
-      className={className}
-      onError={() => setFailed(true)}
+      className={`${className || ''}${saver}`}
+      onError={() => setStage(1)}
     />
   );
 }
@@ -66,8 +98,8 @@ export function LeadStory({ article }) {
     <Link href={`/article/${article._id}`} className="block group">
       <div className="relative w-full aspect-[4/3] bg-rule overflow-hidden">
         <SafeImage src={article.image} fill priority sizes="100vw" className="object-cover" />
-        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-ink/90 via-ink/40 to-transparent px-4 pt-16 pb-4 pointer-events-none">
-          <span className="inline-block text-accent text-xs font-bold uppercase tracking-wide mb-2">
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/90 via-black/55 to-transparent px-4 pt-20 pb-4 pointer-events-none">
+          <span className="inline-block text-amber-300 text-xs font-bold uppercase tracking-wide mb-2 drop-shadow">
             {article.category}
           </span>
           <h1 className="font-serif text-2xl leading-tight text-paper font-semibold group-hover:underline underline-offset-2">

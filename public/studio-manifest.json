@@ -1,0 +1,16 @@
+{
+  "name": "Herald Studio",
+  "short_name": "Studio",
+  "description": "Write, manage and publish Herald — admin & editor app.",
+  "id": "/admin",
+  "start_url": "/admin",
+  "scope": "/admin",
+  "display": "standalone",
+  "background_color": "#0F1020",
+  "theme_color": "#4F46E5",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/studio-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/studio-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

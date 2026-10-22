@@ -1,0 +1,8 @@
+[{
+  "relation": ["delegate_permission/common.handle_all_urls"],
+  "target": {
+    "namespace": "android_app",
+    "package_name": "app.vercel.herald_frontend_ruby.twa",
+    "sha256_cert_fingerprints": ["D1:03:2A:4A:E9:E6:63:64:47:77:0B:5F:A6:05:C1:20:F3:C1:5B:53:7A:38:C9:7F:26:DD:31:08:50:D9:79:E1"]
+  }
+}]

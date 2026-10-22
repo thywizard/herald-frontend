@@ -1,7 +1,8 @@
+import { SITE_URL } from '../lib/site';
 import { getFeed } from '../lib/data';
 
 export default async function sitemap() {
-  const base = 'https://herald.ng';
+  const base = SITE_URL;
   let articles = [];
   try {
     articles = await getFeed(1);
