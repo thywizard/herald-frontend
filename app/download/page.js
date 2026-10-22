@@ -12,17 +12,18 @@ const STEPS = [
   'Open Herald from your home screen — it runs full screen like any other app.',
 ];
 
+// The app is built by GitHub Actions (see .github/workflows/build-apk.yml) and
+// published as a Release; "latest/download" always points at the newest build.
+// Set NEXT_PUBLIC_APK_URL to host the file somewhere else.
+const APK_URL =
+  process.env.NEXT_PUBLIC_APK_URL ||
+  'https://github.com/thywizard/herald-frontend/releases/latest/download/Herald.apk';
+
 export default function DownloadPage() {
-  // The APK is a file we add to the site after building it. Until it's there,
-  // show "coming soon" instead of a dead download link.
-  const [available, setAvailable] = useState(null);
   const [inApp, setInApp] = useState(false);
 
   useEffect(() => {
     setInApp(isInstalledApp());
-    fetch('/herald.apk', { method: 'HEAD' })
-      .then((r) => setAvailable(r.ok && !(r.headers.get('content-type') || '').includes('text/html')))
-      .catch(() => setAvailable(false));
   }, []);
 
   return (
@@ -40,18 +41,14 @@ export default function DownloadPage() {
         {inApp && (
           <p className="inline-block px-5 py-3 rounded-full bg-rule/50 text-ink text-sm">You’re already using the Herald app. 🎉</p>
         )}
-        {!inApp && available === null && <div className="h-12" />}
-        {!inApp && available === true && (
+        {!inApp && (
           <a
-            href="/herald.apk"
+            href={APK_URL}
             download="Herald.apk"
             className="inline-block px-7 py-3.5 rounded-full bg-ink text-paper text-sm font-semibold"
           >
             Download Herald for Android
           </a>
-        )}
-        {!inApp && available === false && (
-          <p className="inline-block px-5 py-3 rounded-full bg-rule/50 text-ink-soft text-sm">The Android app is coming soon.</p>
         )}
       </div>
 

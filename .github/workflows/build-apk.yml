@@ -1,0 +1,108 @@
+name: Build Android app
+
+# Builds the Herald Android app (a Trusted Web Activity wrapping the website)
+# on GitHub's servers and publishes it as a GitHub Release.
+# Start it from the Actions tab → "Build Android app" → Run workflow.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install Android SDK pieces
+        run: |
+          export ANDROID_SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          yes | sdkmanager --licenses > /dev/null || true
+          sdkmanager "platform-tools" "platforms;android-34" "platforms;android-35" "build-tools;34.0.0" "build-tools;35.0.0" > /dev/null
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+
+      - name: Install Bubblewrap
+        run: npm install -g @bubblewrap/cli
+
+      - name: Prepare signing key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ] || [ -z "$KEYSTORE_ALIAS" ] || [ -z "$KEYSTORE_PASSWORD" ]; then
+            echo "::error::Missing secrets. Add KEYSTORE_BASE64, KEYSTORE_ALIAS, KEYSTORE_PASSWORD (and KEY_PASSWORD if different)."
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > android/android.keystore
+          # Safety check: the key must be the one the website vouches for.
+          FP=$(keytool -list -v -keystore android/android.keystore -alias "$KEYSTORE_ALIAS" -storepass "$KEYSTORE_PASSWORD" | grep -m1 'SHA256:' | awk '{print $2}')
+          echo "Signing key SHA-256: $FP"
+          if [ -z "$FP" ]; then
+            echo "::error::Could not read the key. Check KEYSTORE_ALIAS and KEYSTORE_PASSWORD."
+            exit 1
+          fi
+          if ! grep -q "$FP" public/.well-known/assetlinks.json; then
+            echo "::error::This key's fingerprint ($FP) is not in public/.well-known/assetlinks.json - the app would open with a browser bar. Wrong keystore?"
+            exit 1
+          fi
+
+      - name: Configure Bubblewrap
+        run: |
+          mkdir -p ~/.bubblewrap
+          printf '{"jdkPath":"%s","androidSdkPath":"%s"}' "$JAVA_HOME" "$ANDROID_SDK_ROOT" > ~/.bubblewrap/config.json
+          cat ~/.bubblewrap/config.json
+
+      - name: Set version and alias
+        env:
+          KEYSTORE_ALIAS: ${{ secrets.KEYSTORE_ALIAS }}
+        run: |
+          cd android
+          jq --arg alias "$KEYSTORE_ALIAS" \
+             --argjson code "$((100 + ${{ github.run_number }}))" \
+             --arg name "1.${{ github.run_number }}" \
+             '.signingKey.alias=$alias | .appVersionCode=$code | .appVersionName=$name' \
+             twa-manifest.json > tmp.json && mv tmp.json twa-manifest.json
+          cat twa-manifest.json
+
+      - name: Generate Android project
+        working-directory: android
+        run: yes | bubblewrap update --skipVersionUpgrade --manifest=./twa-manifest.json
+
+      - name: Build APK
+        working-directory: android
+        env:
+          BUBBLEWRAP_KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          BUBBLEWRAP_KEY_PASSWORD: ${{ secrets.KEY_PASSWORD || secrets.KEYSTORE_PASSWORD }}
+        run: yes | bubblewrap build --skipPwaValidation --manifest=./twa-manifest.json
+
+      - name: Collect files
+        run: |
+          ls -la android
+          cp android/app-release-signed.apk Herald.apk
+
+      - name: Keep a copy in the run
+        uses: actions/upload-artifact@v4
+        with:
+          name: Herald-apk
+          path: Herald.apk
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android-${{ github.run_number }}
+          name: Herald for Android (build ${{ github.run_number }})
+          body: Signed Android app. Download Herald.apk below and open it on your phone.
+          files: Herald.apk
+          make_latest: true
