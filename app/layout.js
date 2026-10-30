@@ -60,6 +60,13 @@ export default function RootLayout({ children }) {
     <html lang="en" className={`${fraunces.variable} ${inter.variable}`} suppressHydrationWarning>
       <head>
         <ThemeInit />
+        {/* Google AdSense — must be a plain server-rendered tag in <head> so
+            Google's crawler can find it when verifying the site. */}
+        <script
+          async
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8026135429131617"
+          crossOrigin="anonymous"
+        />
       </head>
       <body>
         <AppSplash />
